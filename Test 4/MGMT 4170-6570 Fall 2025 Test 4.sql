@@ -1,16 +1,28 @@
-USE Drug
+-- Justin Chen
+-- MGMT 4170 Fall 2025 Test 4
+-- 12/11/2025
+
+USE exam4
 GO
 
 
 -- dimGeography
-IF  EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID('dimGeography') AND type in (N'U'))
-DROP TABLE dimGeography
+IF  EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID('GeographyStaging') AND type in (N'U'))
+DROP TABLE GeographyStaging
 GO
 
+CREATE TABLE GeographyStaging (
+    FIPS int,
+    StateName varchar(50),
+    StateAbbr varchar(2),
+    DivisionName varchar(50),
+    DivisionID int,
+    RegionName varchar(50),
+    RegionID int
+)
 
-
-BULK INSERT dimGeography
-FROM 'C:\Data\DrugPricing\dimGeography.csv'
+BULK INSERT GeographyStaging
+FROM 'C:\Users\Justin\Documents\GitHub\MGMT-4170-DATA-RESOURCE-MANAGEMENT\Test 4\dimGeography.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -18,9 +30,24 @@ WITH (
     ROWTERMINATOR = '0x0A' 
 )
 
+IF  EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID('dimGeography') AND type in (N'U'))
+DROP TABLE dimGeography
+GO
 
-select *
-from dimGeography
+CREATE TABLE dimGeography (
+    StateAbbr varchar(2),
+    State varchar(50),
+    Division varchar(50),
+    Region varchar(50),
+    FIPS int
+)
+
+INSERT INTO dimGeography (StateAbbr, State, Division, Region, FIPS)
+SELECT StateAbbr, StateName, DivisionName, RegionName, FIPS
+FROM GeographyStaging
+
+SELECT *
+FROM dimGeography
 ------------------------------
 -- ProviderPrognosis
 ----
@@ -48,7 +75,7 @@ CREATE TABLE  ProviderPrognosis (
 )
 
 BULK INSERT ProviderPrognosis
-FROM 'C:\Data\DrugPricing\Prognosis.txt'
+FROM 'C:\Users\Justin\Documents\GitHub\MGMT-4170-DATA-RESOURCE-MANAGEMENT\Test 4\Prognosis.txt'
 WITH (
     FIRSTROW = 2,           
     FIELDTERMINATOR = '\t',   
@@ -77,7 +104,7 @@ CREATE TABLE PhysicianStaging (
 )
 
 BULK INSERT PhysicianStaging
-FROM 'C:\Data\DrugPricing\Physician.csv'
+FROM 'C:\Users\Justin\Documents\GitHub\MGMT-4170-DATA-RESOURCE-MANAGEMENT\Test 4\Physician.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
@@ -93,8 +120,23 @@ FROM PhysicianStaging
 -- Create a dimension table called dimPhysician
 -- split name into first and last
 ------------------------------
+IF  EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID('dimPhysician') AND type in (N'U'))
+DROP TABLE dimPhysician
+GO
 
+CREATE TABLE dimPhysician (
+	ProviderID int NOT NULL,
+	FirstName varchar(50),
+	LastName varchar(50),
+	CONSTRAINT PK_dimPhysician PRIMARY KEY CLUSTERED (ProviderID)
+)
 
+INSERT INTO dimPhysician (ProviderID, FirstName, LastName)
+SELECT 
+	ProviderID,
+	SUBSTRING(FullName, 1, CHARINDEX(' ', FullName) - 1),
+	SUBSTRING(FullName, CHARINDEX(' ', FullName) + 1, LEN(FullName))
+FROM PhysicianStaging
 
 SELECT *
 FROM dimPhysician;
@@ -212,7 +254,7 @@ CREATE TABLE factSales(
 
 
 BULK INSERT factSales
-FROM 'C:\Data\DrugPricing\SalesData.txt'
+FROM 'C:\Users\Justin\Documents\GitHub\MGMT-4170-DATA-RESOURCE-MANAGEMENT\Test 4\SalesData.txt'
 WITH (
     FIRSTROW = 2,           
     FIELDTERMINATOR = '\t',   
@@ -224,23 +266,78 @@ select *
 from factSales
 
 -- Q1 What did the customer pay and what were they willing to pay?
+SELECT fs.CustomerID, fs.PricePaid, cs.Q6 AS WillingToPay
+FROM factSales fs
+JOIN CustomerSurveyODS cs ON fs.CustomerID = cs.CustomerID
 
 -- Q2 if people paid what they were willing to pay, how much money would we make
-
+SELECT SUM(cs.Q6) AS TotalPotentialRevenue
+FROM factSales fs
+JOIN CustomerSurveyODS cs ON fs.CustomerID = cs.CustomerID
 
 -- that number seems high.  
 
+-- revenue difference
+select SUM(cs.Q6) - SUM(fs.PricePaid) AS RevenueDifference
+from factSales fs
+join CustomerSurveyODS cs ON fs.CustomerID = cs.CustomerID
+
+
 -- Q3 What is the min and max customers paid
 	--What is the min and max customers were willing to pay
+SELECT 
+    MIN(fs.PricePaid) AS MinPaid, 
+    MAX(fs.PricePaid) AS MaxPaid,
+    MIN(cs.Q6) AS MinWillingToPay,
+    MAX(cs.Q6) AS MaxWillingToPay
+FROM factSales fs
+JOIN CustomerSurveyODS cs ON fs.CustomerID = cs.CustomerID
 
+--select * from factSales fs
+--join CustomerSurveyODS cs ON fs.CustomerID = cs.CustomerID
+--order by cs.Q6 desc
 
 -- Q4 the problem seems to be with q6 
 --  delete any rows where q6 > 2500
+DELETE FROM CustomerSurveyODS
+WHERE Q6 > 2500
 
 -- Q5 what is the average customers are willing to pay by location using grouping sets.  
 -- first group is state, then division, then region
+SELECT 
+    g.State,
+    g.Division,
+    g.Region,
+    AVG(cs.Q6) AS AvgWillingToPay
+FROM CustomerSurveyODS cs
+JOIN dimGeography g ON cs.StateAbbr = g.StateAbbr
+GROUP BY GROUPING SETS (
+    (g.State),
+    (g.Division),
+    (g.Region)
+)
 
 -- Q6 What are customers willing to pay?  Pivot gender and condition
+SELECT Condition, [M], [F], [U]
+FROM (
+    SELECT dc.Condition, dc.Gender, cs.Q6
+    FROM dimCustomer dc
+    JOIN CustomerSurveyODS cs ON dc.CustomerID = cs.CustomerID
+) AS SourceTable
+PIVOT (
+    AVG(Q6)
+    FOR Gender IN ([M], [F], [U])
+) AS PivotTable
 
 -- Q7 Is $1399 a reasonable price to charge?
+SELECT 
+    AVG(Q6) AS AvgWillingness,
+    (COUNT(CASE WHEN Q6 >= 1399 THEN 1 END) * 100.0 / COUNT(*)) AS PercentWillingToPay1399,
+	CASE 
+		WHEN (COUNT(CASE WHEN Q6 >= 1399 THEN 1 END) * 100.0 / COUNT(*)) >= 98 THEN 'Yes'
+		ELSE 'No'
+	END AS [Should Charge]
+FROM CustomerSurveyODS
 
+-- 98% willing to pay is the threshold i defined as a good price. why? because an alternate reality where 50% of people can't comfortably pay their medical and health care is a harrowing thought
+-- (us stat: Around 51% of U.S. adults can currently afford and access quality healthcare).

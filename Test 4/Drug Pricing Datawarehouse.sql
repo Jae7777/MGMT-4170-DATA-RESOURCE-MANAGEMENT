@@ -1,7 +1,7 @@
 -------------------------
 -- Drug Pricing Data Warehouse
 -------------------------
-USE DrugPricing
+USE exam4
 GO
 
 -------------------------
@@ -61,7 +61,7 @@ SurveyDate date
 )
 
 BULK INSERT CustomerSurveyStaging
-FROM 'C:\Data\DrugPricing\CustomerSurvey.csv'
+FROM 'C:\Users\Justin\Documents\GitHub\MGMT-4170-DATA-RESOURCE-MANAGEMENT\Test 4\CustomerSurvey.csv'
 WITH (
     FIRSTROW = 2,
     FIELDTERMINATOR = ',',
